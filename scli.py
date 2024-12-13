@@ -5,50 +5,76 @@ from datetime import datetime, timedelta
 import pytz
 import subprocess
 
-def check_ssh_logs():
+
+def check_security_logs():
     """
-    Automatically check SSH logs for suspicious activities such as login attempts or sensitive operations.
+    Check system logs for suspicious and dangerous activities including SSH attempts,
+    system modifications, and security-related operations.
 
     Returns:
         dict: A dictionary with keywords as keys and a tuple (count, average interval) as values.
     """
-    log_file_path = "/var/log/auth.log"
-    if not os.path.exists(log_file_path):
-        print(f"Log file {log_file_path} does not exist!")
-        return {}
+    log_files = {
+        "/var/log/auth.log": [
+            "Failed password",
+            "Accepted password",
+            "Invalid user",
+            "sudo",
+            "root login",
+            "permission denied",
+            "authentication failure",
+            "SECURITY VIOLATION",
+        ],
+        "/var/log/syslog": [
+            "error",
+            "warning",
+            "critical",
+            "emergency",
+            "firewall",
+            "iptables",
+        ],
+        "/var/log/kern.log": ["segfault", "error", "fail", "denied"],
+    }
 
-    keywords = ["Failed password", "Accepted password", "Invalid user", "sudo"]
-    keyword_data = {keyword: [] for keyword in keywords}
+    keyword_data = {}
+    for log_file, keywords in log_files.items():
+        for keyword in keywords:
+            keyword_data[f"{log_file}:{keyword}"] = []
 
     try:
         now = datetime.now(pytz.utc)
-        with open(log_file_path, 'r') as log_file:
-            for line in log_file:
-                for keyword in keywords:
-                    if keyword in line:
-                        try:
-                            # Attempt to parse timestamp with the detected format
-                            timestamp_str = line.split()[0]
-                            log_time = datetime.fromisoformat(timestamp_str)
+        for log_file in log_files:
+            if not os.path.exists(log_file):
+                print(f"Log file {log_file} does not exist!")
+                continue
 
-                            # Make log_time timezone-aware if it is naive
-                            if log_time.tzinfo is None:
-                                log_time = pytz.utc.localize(log_time)
+            with open(log_file, "r") as file:
+                for line in file:
+                    for keyword in log_files[log_file]:
+                        if keyword.lower() in line.lower():
+                            try:
+                                timestamp_str = line.split()[0]
+                                log_time = datetime.fromisoformat(timestamp_str)
 
-                        except ValueError:
-                            print(f"Skipping line due to unrecognized timestamp: {line.strip()}")
-                            continue
+                                if log_time.tzinfo is None:
+                                    log_time = pytz.utc.localize(log_time)
 
-                        # Only include logs within the last 24 hours
-                        if now - log_time <= timedelta(hours=24):
-                            keyword_data[keyword].append(log_time)
+                                if now - log_time <= timedelta(hours=24):
+                                    keyword_data[f"{log_file}:{keyword}"].append(
+                                        log_time
+                                    )
+                            except ValueError:
+                                print(
+                                    f"Skipping line due to unrecognized timestamp: {line.strip()}"
+                                )
+                                continue
     except Exception as e:
-        print(f"Error reading log file: {e}")
+        print(f"Error reading log files: {e}")
         return {}
 
     # Calculate statistics
     result = {}
-    for keyword, timestamps in keyword_data.items():
+    for key, timestamps in keyword_data.items():
         if timestamps:
             timestamps.sort()
             intervals = [
@@ -56,11 +82,12 @@ def check_ssh_logs():
                 for i in range(1, len(timestamps))
             ]
             average_interval = sum(intervals) / len(intervals) if intervals else 0
-            result[keyword] = (len(timestamps), average_interval)
+            result[key] = (len(timestamps), average_interval)
         else:
-            result[keyword] = (0, 0)
+            result[key] = (0, 0)
 
     return result
+
 
 def install_fail2ban():
     """
@@ -68,7 +95,9 @@ def install_fail2ban():
     """
     try:
         # Check if Fail2Ban is already installed
-        check_install = subprocess.run(["dpkg", "-l", "fail2ban"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        check_install = subprocess.run(
+            ["dpkg", "-l", "fail2ban"], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
         if check_install.returncode == 0:
             print("Fail2Ban is already installed.")
         else:
@@ -77,7 +106,11 @@ def install_fail2ban():
             subprocess.run(["sudo", "apt-get", "install", "-y", "fail2ban"], check=True)
 
         # Check if Fail2Ban service is active
-        check_status = subprocess.run(["sudo", "systemctl", "is-active", "fail2ban"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        check_status = subprocess.run(
+            ["sudo", "systemctl", "is-active", "fail2ban"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
         if check_status.returncode == 0:
             print("Fail2Ban is already running.")
         else:
@@ -88,13 +121,19 @@ def install_fail2ban():
     except subprocess.CalledProcessError as e:
         print(f"An error occurred during Fail2Ban installation or setup: {e}")
 
+
 def list_risky_ports():
     """
     List all open ports on the server and identify potentially risky ones.
     """
     try:
         print("Scanning for open ports...")
-        result = subprocess.run(["sudo", "netstat", "-tuln"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        result = subprocess.run(
+            ["sudo", "netstat", "-tuln"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
         if result.returncode != 0:
             print("Error fetching port information:")
             print(result.stderr)
@@ -105,39 +144,88 @@ def list_risky_ports():
         for line in lines[2:]:  # Skip headers
             print(line)
 
-        print("\nReview open ports for potential risks, such as unnecessary services or default ports.")
+        print(
+            "\nReview open ports for potential risks, such as unnecessary services or default ports."
+        )
     except Exception as e:
         print(f"An error occurred while listing ports: {e}")
+
+
+def install_basic_tools():
+    """
+    Install common system tools and utilities.
+    """
+    tools = {
+        "net-tools": "Network tools (includes netstat)",
+        "python3": "Python 3",
+        "python3-pip": "Python package manager",
+        "htop": "System monitoring tool",
+        "curl": "File transfer tool",
+        "wget": "File download utility",
+        "vim": "Text editor",
+        "tmux": "Terminal multiplexer",
+    }
+
+    try:
+        print("Updating package list...")
+        subprocess.run(["sudo", "apt-get", "update"], check=True)
+
+        for tool, description in tools.items():
+            print(f"\nInstalling {tool} ({description})...")
+            try:
+                subprocess.run(["sudo", "apt-get", "install", "-y", tool], check=True)
+                print(f"{tool} installed successfully")
+            except subprocess.CalledProcessError as e:
+                print(f"Failed to install {tool}: {e}")
+
+    except subprocess.CalledProcessError as e:
+        print(f"Error updating package list: {e}")
+
 
 def main():
     parser = argparse.ArgumentParser(description="Server Security Tool")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
-    # Sub-command: csl (Check SSH Logs)
-    log_parser = subparsers.add_parser("csl", help="Check SSH logs for suspicious activities")
+    # Sub-command: cl (Check system security logs)
+    log_parser = subparsers.add_parser(
+        "cl", help="Check system security logs for suspicious activities"
+    )
 
     # Sub-command: if2 (Install Fail2Ban)
     fail2ban_parser = subparsers.add_parser("if2", help="Install and enable Fail2Ban")
 
-    # Sub-command: list_ports (List risky ports)
-    ports_parser = subparsers.add_parser("list_ports", help="List all open ports and identify potentially risky ones")
+    # Sub-command: lp (List risky ports)
+    ports_parser = subparsers.add_parser(
+        "lp", help="List all open ports and identify potentially risky ones"
+    )
+
+    # New subcommand: it (Install Tools)
+    tools_parser = subparsers.add_parser("it", help="Install common system utilities")
 
     args = parser.parse_args()
 
-    if args.command == "csl":
-        statistics = check_ssh_logs()
+    if args.command == "cl":
+        statistics = check_security_logs()
         if statistics:
-            print("Suspicious SSH activity in the last 24 hours:")
-            for keyword, (count, avg_interval) in statistics.items():
-                print(f"Keyword: {keyword}, Count: {count}, Average Interval: {avg_interval:.2f} seconds")
+            print("Suspicious activities in the last 24 hours:")
+            for key, (count, avg_interval) in statistics.items():
+                log_file, keyword = key.split(":", 1)
+                if count > 0:
+                    print(f"Log: {log_file}")
+                    print(f"  Keyword: {keyword}")
+                    print(f"  Count: {count}")
+                    print(f"  Average Interval: {avg_interval:.2f} seconds\n")
         else:
-            print("No suspicious SSH log entries found in the last 24 hours.")
+            print("No suspicious log entries found in the last 24 hours.")
     elif args.command == "if2":
         install_fail2ban()
-    elif args.command == "list_ports":
+    elif args.command == "lp":
         list_risky_ports()
+    elif args.command == "it":
+        install_basic_tools()
     else:
         parser.print_help()
+
 
 if __name__ == "__main__":
     main()
