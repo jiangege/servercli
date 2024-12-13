@@ -182,6 +182,51 @@ def install_basic_tools():
         print(f"Error updating package list: {e}")
 
 
+def clean_privacy_logs():
+    """
+    Clean sensitive information from log files and display SSH login records.
+    """
+    try:
+        log_files = [
+            "/var/log/auth.log",
+            "/var/log/btmp",
+            "/var/log/wtmp",
+            "/var/log/lastlog",
+        ]
+
+        # Display SSH login records
+        print("Recent SSH login records:")
+        try:
+            last_output = subprocess.run(
+                ["last"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+            print(last_output.stdout)
+        except subprocess.CalledProcessError as e:
+            print(f"Error fetching SSH records: {e}")
+
+        # Ask for confirmation before cleaning
+        confirm = input("Do you want to clean privacy logs? (y/N): ")
+        if confirm.lower() != "y":
+            print("Operation cancelled.")
+            return
+
+        # Clean logs
+        for log_file in log_files:
+            if os.path.exists(log_file):
+                try:
+                    open(log_file, "w").close()  # Truncate file
+                    print(f"Cleaned {log_file}")
+                except PermissionError:
+                    print(f"Permission denied for {log_file}. Try running with sudo.")
+            else:
+                print(f"Log file {log_file} not found")
+
+        print("Privacy logs cleaned successfully")
+
+    except Exception as e:
+        print(f"Error during privacy cleaning: {e}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Server Security Tool")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -201,6 +246,11 @@ def main():
 
     # New subcommand: it (Install Tools)
     tools_parser = subparsers.add_parser("it", help="Install common system utilities")
+
+    # Add new subcommand: cp (Clean Privacy)
+    privacy_parser = subparsers.add_parser(
+        "cp", help="Clean privacy logs and display SSH login records"
+    )
 
     args = parser.parse_args()
 
@@ -223,6 +273,8 @@ def main():
         list_risky_ports()
     elif args.command == "it":
         install_basic_tools()
+    elif args.command == "cp":
+        clean_privacy_logs()
     else:
         parser.print_help()
 
